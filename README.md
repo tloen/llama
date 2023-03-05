@@ -1,3 +1,12 @@
+# LLaMA: INT8 save/load edition
+
+This is a fork of the below fork of LLaMA. I've added the option to save and load the model in INT8 format directly to disk. LLaMA 7B maxes out at 9500MB of VRAM.
+
+The code contains the following changes:
+
+- Added `--int8_save_path` and `--int8_load_path` flags to `example.py`
+- Removed bitsandbytes dependency from requirements.txt because the pip version is broken. You'll need to install it using [Tim Dettmers' instructions](https://github.com/TimDettmers/bitsandbytes/blob/main/compile_from_source.md).
+
 # LLaMA: INT8 edition
 
 This is a fork of the LLaMA code that runs LLaMA-13B

@@ -18,10 +18,12 @@ def load(
     tokenizer_path: str,
     max_seq_len: int,
     max_batch_size: int,
+    int8_save_path: str = None,
+    int8_load_path: str = None,
 ) -> LLaMA:
     start_time = time.time()
     checkpoints = sorted(Path(ckpt_dir).glob("*.pth"))
-
+    #if not loading in int8, or if save path is specified, load from checkpoints
     with open(Path(ckpt_dir) / "params.json", "r") as f:
         params = json.loads(f.read())
 
@@ -30,50 +32,59 @@ def load(
     )
     tokenizer = Tokenizer(model_path=tokenizer_path)
     model_args.vocab_size = tokenizer.n_words
-
     torch.set_default_tensor_type(torch.HalfTensor)
     print("Allocating transformer on host")
     ctx_tok = default_quantize.set(True)
-    model = Transformer(model_args)
-    default_quantize.set(ctx_tok)
-    key_to_dim = {
-        "w1": 0,
-        "w2": -1,
-        "w3": 0,
-        "wo": -1,
-        "wq": 0,
-        "wk": 0,
-        "wv": 0,
-        "output": 0,
-        "tok_embeddings": -1,
-        "ffn_norm": None,
-        "attention_norm": None,
-        "norm": None,
-        "rope": None,
-    }
+    if int8_load_path is None or int8_save_path is not None:
+        model = Transformer(model_args)
+        default_quantize.set(ctx_tok)
+        key_to_dim = {
+            "w1": 0,
+            "w2": -1,
+            "w3": 0,
+            "wo": -1,
+            "wq": 0,
+            "wk": 0,
+            "wv": 0,
+            "output": 0,
+            "tok_embeddings": -1,
+            "ffn_norm": None,
+            "attention_norm": None,
+            "norm": None,
+            "rope": None,
+        }
 
-    # ?
-    torch.set_default_tensor_type(torch.FloatTensor)
+        # ?
+        torch.set_default_tensor_type(torch.FloatTensor)
 
-    # load the state dict incrementally, to avoid memory problems
-    for i, ckpt in enumerate(checkpoints):
-        print(f"Loading checkpoint {i}")
-        checkpoint = torch.load(ckpt, map_location="cpu")
-        for parameter_name, parameter in model.named_parameters():
-            short_name = parameter_name.split(".")[-2]
-            if key_to_dim[short_name] is None and i == 0:
-                parameter.data = checkpoint[parameter_name]
-            elif key_to_dim[short_name] == 0:
-                size = checkpoint[parameter_name].size(0)
-                parameter.data[size * i : size * (i + 1), :] = checkpoint[
-                    parameter_name
-                ]
-            elif key_to_dim[short_name] == -1:
-                size = checkpoint[parameter_name].size(-1)
-                parameter.data[:, size * i : size * (i + 1)] = checkpoint[
-                    parameter_name
-                ]
-        del checkpoint
+        # load the state dict incrementally, to avoid memory problems
+        for i, ckpt in enumerate(checkpoints):
+            print(f"Loading checkpoint {i}")
+            checkpoint = torch.load(ckpt, map_location="cpu")
+            for parameter_name, parameter in model.named_parameters():
+                short_name = parameter_name.split(".")[-2]
+                if key_to_dim[short_name] is None and i == 0:
+                    parameter.data = checkpoint[parameter_name]
+                elif key_to_dim[short_name] == 0:
+                    size = checkpoint[parameter_name].size(0)
+                    parameter.data[size * i : size * (i + 1), :] = checkpoint[
+                        parameter_name
+                    ]
+                elif key_to_dim[short_name] == -1:
+                    size = checkpoint[parameter_name].size(-1)
+                    parameter.data[:, size * i : size * (i + 1)] = checkpoint[
+                        parameter_name
+                    ]
+            del checkpoint
+        #if a save path is specified, save the model in INT8 format
+        if int8_save_path is not None:
+            print("Saving int8 model file")
+            torch.save(model.state_dict(), int8_save_path)
+    elif int8_load_path is not None:
+        print("Loading int8 model file")
+        torch.set_default_tensor_type(torch.FloatTensor)
+        model = Transformer(model_args)
+        model.load_state_dict(torch.load(int8_load_path,map_location="cpu"))
 
     model.cuda()
 
@@ -91,8 +102,10 @@ def main(
     top_p: float = 0.95,
     max_seq_len: int = 512,
     max_batch_size: int = 32,
+    int8_save_path: str = None,
+    int8_load_path: str = None,
 ):
-    generator = load(ckpt_dir, tokenizer_path, max_seq_len, max_batch_size)
+    generator = load(ckpt_dir, tokenizer_path, max_seq_len, max_batch_size, int8_save_path, int8_load_path)
 
     prompts = [
         # For these prompts, the expected answer is the natural continuation of the prompt
